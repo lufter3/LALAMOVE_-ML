@@ -1,0 +1,267 @@
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
+from bs4 import BeautifulSoup
+import re
+import pandas as pd
+import time
+import traceback
+from datetime import datetime
+
+
+def configurar_navegador():
+    options = Options()
+    driver = webdriver.Chrome(
+        service=Service(ChromeDriverManager().install()),
+        options=options
+    )
+    driver.set_window_rect(0, 0, 640, 640)
+    wait = WebDriverWait(driver, 60)
+    return driver, wait
+
+
+def acceder_al_sistema(driver, url):
+    driver.get(url)
+    print("🌐 Página cargada:", url)
+
+
+def ingresar_usuario(wait, usuario):
+    inp = wait.until(EC.presence_of_element_located((By.NAME, "identifier")))
+    inp.send_keys(usuario)
+    btn = wait.until(EC.element_to_be_clickable(
+        (By.CSS_SELECTOR, "input[type='submit'], button[type='submit']")))
+    btn.click()
+    print("✅ Usuario ingresado")
+
+
+def ingresar_contrasena(wait, contrasena):
+    inp = wait.until(EC.presence_of_element_located((By.NAME, "credentials.passcode")))
+    inp.send_keys(contrasena)
+    btn = wait.until(EC.element_to_be_clickable(
+        (By.CSS_SELECTOR, "input[type='submit'], button[type='submit']")))
+    btn.click()
+    print("✅ Contraseña ingresada")
+
+
+def clic_boton_estas_viendo(wait):
+    try:
+        btn = wait.until(EC.element_to_be_clickable(
+            (By.XPATH, "//span[contains(text(),'Estás viendo')]")))
+        btn.click()
+        print("✅ Clic en botón 'Estás viendo'")
+    except Exception as e:
+        raise Exception(f"❌ Error al hacer clic en 'Estás viendo': {e}")
+
+
+def esperar_confirmacion_manual():
+    input("🗁️ Selecciona sitio, haz clic en 'Aplicar' y luego presiona ENTER aquí...")
+
+
+def obtener_sitio(driver):
+    try:
+        txt = driver.find_element(
+            By.CSS_SELECTOR, "span.appNav_selector__selection").text.strip()
+        print(f"📍 Sitio: {txt}")
+        return txt
+    except Exception:
+        return ""
+
+
+def contar_rutas_activas(driver):
+    filas = driver.find_elements(By.CSS_SELECTOR, "div.monitoring-row__first-line")
+    rutas = [f for f in filas if f.find_elements(
+        By.CSS_SELECTOR, "img.monitoring-row__chevron, img.monitoring-row__chevron--open")]
+    print(f"🔍 Rutas activas identificadas: {len(rutas)}")
+    return rutas
+
+
+def limpiar_paquetes(texto):
+    return re.sub(r'(entregados|entregas|fallidas)', '', texto).strip()
+
+
+def extraer_datos_ruta(ruta_element):
+    html = ruta_element.get_attribute('innerHTML')
+    soup = BeautifulSoup(html, 'html.parser')
+
+    data = {
+        'Nombre Ruta': '', 'ID Ruta': '', 'Ciclo': '', 'Conductor Nombre': '',
+        'Placa': '', 'Tipo Vehículo': '',
+        'Paquetes Entregados': 0, 'Paquetes Fallidos': 0, 'Paquetes Pendientes': 0,
+        'Total Paquetes': 0, 'Efectividad (%)': 0.0,
+        'Estado General': '', 'Estado Detalle': '',
+        'Horas Zona (OZH)': '', 'Horas Ruta (ORH)': '',
+        'Inf Auxiliar': ''
+    }
+
+    # Nombre e ID
+    nodo = soup.find('p', class_='monitoring-row__bold')
+    if nodo:
+        txt = nodo.get_text(strip=True)
+        if '|' in txt:
+            nombre, folio = [x.strip() for x in txt.split('|')]
+            data['Nombre Ruta'] = nombre
+            m = re.search(r'#(\d+)', folio)
+            data['ID Ruta'] = m.group(1) if m else ''
+        else:
+            data['Nombre Ruta'] = txt
+
+    # Ciclo
+    ciclo = soup.find('div', class_='monitoring-row-details__cycle')
+    if ciclo:
+        data['Ciclo'] = ciclo.get_text(strip=True)
+
+    # Conductor
+    cond = soup.find('p', class_='monitoring-row-details__driver-name')
+    if cond:
+        data['Conductor Nombre'] = cond.get_text(strip=True)
+
+    # Placa & tipo vehículo
+    lic = soup.find('p', class_='monitoring-row-details__license')
+    if lic:
+        parts = lic.get_text(strip=True).split('|')
+        data['Placa'] = parts[0].strip() if parts else ''
+        data['Tipo Vehículo'] = parts[1].strip() if len(parts) > 1 else ''
+
+    # Paquetes entregados y fallidos
+    entreg = soup.find_all('div', class_='monitoring-row-shipments__delivered-packages-text')
+    if len(entreg) >= 2:
+        e = entreg[0].get_text(strip=True)
+        f = entreg[1].get_text(strip=True)
+        data['Paquetes Entregados'] = int(re.sub(r'\D', '', e))
+        data['Paquetes Fallidos'] = int(re.sub(r'\D', '', f))
+
+    # Pendientes
+    pen = soup.find('p', class_='monitoring-row-shipments__packages')
+    if pen:
+        ptxt = pen.get_text(strip=True)
+        data['Paquetes Pendientes'] = int(re.sub(r'\D', '', ptxt))
+
+    # Total y efectividad
+    total = (data['Paquetes Entregados'] +
+             data['Paquetes Fallidos'] +
+             data['Paquetes Pendientes'])
+    data['Total Paquetes'] = total
+    if total > 0:
+        efect = (total - data['Paquetes Fallidos']) / total * 100
+        data['Efectividad (%)'] = round(efect, 2)
+
+    # Estado general y detalle
+    est = soup.find('p', class_='monitoring-row-details__name')
+    descs = soup.find_all('p', class_='monitoring-row-details__untracked')
+    if est:
+        data['Estado General'] = est.get_text(strip=True)
+    if descs:
+        data['Estado Detalle'] = descs[-1].get_text(strip=True)
+
+    # Horas OZH / ORH
+    for box in soup.find_all('div', class_='metric-box'):
+        tit = box.find('div', class_='andes-tooltip__trigger')
+        val = box.find('div', class_='metric-box__value-principal')
+        if tit and val:
+            t = tit.get_text(strip=True)
+            v = val.get_text(strip=True)
+            if 'OZH' in t:
+                data['Horas Zona (OZH)'] = v
+            elif 'ORH' in t:
+                data['Horas Ruta (ORH)'] = v
+
+    # Inf Auxiliar
+    aux = soup.find('div', class_='monitoring-row-details__data-has-helper')
+    data['Inf Auxiliar'] = 'Con auxiliar' if aux else 'Sin auxiliar'
+
+    return data
+
+
+def guardar_en_excel(datos):
+    df = pd.DataFrame(datos)
+    # Orden exacto de las columnas
+    cols = [
+        "Fecha","Sitio","Conductor Nombre","Nombre Ruta","ID Ruta","Ciclo",
+        "Placa","Tipo Vehículo","Inf Auxiliar",
+        "Paquetes Entregados","Paquetes Fallidos","Paquetes Pendientes",
+        "Total Paquetes","Efectividad (%)","Estado Detalle",
+        "Horas Zona (OZH)","Horas Ruta (ORH)","Estado General"
+    ]
+    df = df[cols]
+
+    nombre = f"rutas_data_{datetime.now().strftime('%Y%m%d')}.xlsx"
+    with pd.ExcelWriter(nombre, engine='xlsxwriter') as writer:
+        df.to_excel(writer, sheet_name='Rutas', index=False)
+        wb  = writer.book
+        ws  = writer.sheets['Rutas']
+
+        # Formatos
+        center_fmt  = wb.add_format({'align': 'center'})
+        default_fmt = wb.add_format({'align': 'left'})
+        to_center = {
+            "Paquetes Entregados","Paquetes Fallidos","Paquetes Pendientes",
+            "Total Paquetes","Efectividad (%)",
+            "Horas Zona (OZH)","Horas Ruta (ORH)"
+        }
+
+        # Ajustar ancho y alineación
+        for idx, col in enumerate(df.columns):
+            max_len = max(df[col].astype(str).map(len).max(), len(col)) + 2
+            fmt = center_fmt if col in to_center else default_fmt
+            ws.set_column(idx, idx, max_len, fmt)
+
+        # Semáforo en Efectividad (%)
+        col_idx = df.columns.get_loc("Efectividad (%)")
+        last_row = len(df)
+        ws.conditional_format(
+            1, col_idx, last_row, col_idx,
+            {
+                'type': 'icon_set',
+                'icon_style': '3TrafficLights1',
+                'icons': [
+                    {'criteria': '>=', 'type': 'number', 'value': 95},
+                    {'criteria': '>=', 'type': 'number', 'value': 90}
+                ],
+                'show_value': True
+            }
+        )
+    print(f"💾 Archivo generado: {nombre}")
+
+
+def main():
+    driver, wait = configurar_navegador()
+    resultados = []
+
+    try:
+        acceder_al_sistema(driver,
+            "https://envios.adminml.com/logistics/monitoring-distribution")
+        ingresar_usuario(wait, "ext_hugodomi")
+        ingresar_contrasena(wait, "Empezaron&4193%")
+        clic_boton_estas_viendo(wait)
+
+        while True:
+            esperar_confirmacion_manual()
+            sitio = obtener_sitio(driver)
+            rutas = contar_rutas_activas(driver)
+            fecha = datetime.now().strftime('%Y-%m-%d')
+
+            for ruta in rutas:
+                d = extraer_datos_ruta(ruta)
+                d['Sitio']  = sitio
+                d['Fecha']  = fecha
+                resultados.append(d)
+
+            if input("\n¿Otro sitio? (Enter=Sí / n=No): ").lower() == 'n':
+                break
+
+        guardar_en_excel(resultados)
+
+    except Exception:
+        print("❌ Error:")
+        traceback.print_exc()
+    finally:
+        print("🧭 Revisa el navegador y cierra cuando quieras.")
+        # driver.quit()
+
+
+if __name__ == "__main__":
+    main()
