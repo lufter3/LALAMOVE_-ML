@@ -1,0 +1,173 @@
+# 📚 Importación de librerías necesarias
+from selenium import webdriver                            # Control del navegador
+from selenium.webdriver.common.by import By              # Localización de elementos
+from selenium.webdriver.support.ui import WebDriverWait  # Esperas explícitas
+from selenium.webdriver.support import expected_conditions as EC  # Condiciones de espera
+from selenium.webdriver.chrome.service import Service     # Servicio del ChromeDriver
+from webdriver_manager.chrome import ChromeDriverManager  # Manejo automático del driver
+from selenium.webdriver.chrome.options import Options     # Opciones de navegador
+import time                                               # Control de tiempo (pausas)
+import traceback                                          # Mostrar errores en consola
+
+# 🧮 Diccionario acumulador de datos globales
+acumulador = {
+    "rutas": 0,
+    "paquetes": 0,
+    "sacas": 0,
+    "entregados_u": 0,
+    "fallidas_u": 0,
+    "entregados_%": [],
+    "fallidas_%": []
+}
+
+# 🛠️ Configura y lanza el navegador con Chrome
+def configurar_navegador():
+    chrome_options = Options()
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+    driver.set_window_rect(0, 0, 640, 640)  # Tamaño pequeño para menor consumo
+    wait = WebDriverWait(driver, 60)       # Esperas de hasta 60 segundos
+    return driver, wait
+
+# 🌐 Abre la URL del sistema
+def acceder_al_sistema(driver, url):
+    driver.get(url)
+    print("🌐 Página cargada:", url)
+
+# 👤 Ingresa el usuario en el campo correspondiente
+def ingresar_usuario(wait, usuario):
+    user_input = wait.until(EC.presence_of_element_located((By.NAME, "identifier")))
+    user_input.send_keys(usuario)
+    siguiente_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='submit'], button[type='submit']")))
+    siguiente_btn.click()
+    print("✅ Usuario ingresado")
+
+# 🔒 Ingresa la contraseña y continúa
+def ingresar_contrasena(wait, contrasena):
+    password_input = wait.until(EC.presence_of_element_located((By.NAME, "credentials.passcode")))
+    password_input.send_keys(contrasena)
+    verificar_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='submit'], button[type='submit']")))
+    verificar_btn.click()
+    print("✅ Contraseña ingresada")
+
+# ✅ Clic en el botón 'Estás viendo'
+def clic_boton_estas_viendo(wait):
+    estas_viendo_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(text(),'Estás viendo')]")))
+    estas_viendo_btn.click()
+    print("✅ Clic en botón 'Estás viendo'")
+
+# ⏳ Espera a que aparezcan los campos de sitio y región
+def esperar_campos_busqueda(wait):
+    wait.until(EC.presence_of_element_located((By.CLASS_NAME, "appNav_selector__selection")))
+    print("⏳ Campos de búsqueda listos")
+
+# 🖱️ Pausa para selección manual de región y sitio
+def esperar_confirmacion_manual():
+    input("🖱️ Selecciona región y sitio, haz clic en 'Aplicar'. Luego presiona ENTER aquí...")
+
+# 📊 Función principal que extrae datos de la vista actual
+def extraer_datos(driver, wait):
+    # Espera a que se cargue el resumen de métricas
+    wait.until(EC.presence_of_element_located((By.CLASS_NAME, "summary__card-box")))
+
+    # 📍 Extraer nombre del sitio
+    site = driver.find_element(By.CLASS_NAME, "appNav_selector__selection").text
+
+    # 📈 Extraer métricas numéricas principales
+    rutas = int(driver.find_element(By.XPATH, "//p[text()='Rutas']/following-sibling::div").text.replace(",", ""))
+    paquetes = int(driver.find_element(By.XPATH, "//p[text()='Paquetes']/following-sibling::div").text.replace(",", ""))
+    sacas = int(driver.find_element(By.XPATH, "//p[text()='Sacas']/following-sibling::div").text.replace(",", ""))
+
+    # ✅ Extraer entregados desde el tooltip con JavaScript
+    entregados_unidades = int(driver.execute_script("""
+        let tip = [...document.querySelectorAll('.chart-tooltip-title')].find(e => e.textContent.includes('Entregados'));
+        if (tip) {
+            let val = tip.closest('.tooltip-content').querySelector('.chart-tooltip-subtitle');
+            return val ? val.textContent.replace(/[^\\d]/g, '') : "0";
+        }
+        return "0";
+    """) or "0")
+
+    # 🚫 Extraer fallidas desde el tooltip con JavaScript
+    fallidas_unidades = int(driver.execute_script("""
+        let tip = [...document.querySelectorAll('.chart-tooltip-title')].find(e => e.textContent.toLowerCase().includes('fallidas'));
+        if (tip) {
+            let val = tip.closest('.tooltip-content').querySelector('.chart-tooltip-subtitle');
+            return val ? val.textContent.replace(/[^\\d]/g, '') : "0";
+        }
+        return "0";
+    """) or "0")
+
+    # 📊 Calcular porcentajes de entregados y fallidas correctamente
+    entregados_porcentaje = round((entregados_unidades / paquetes) * 100, 2) if paquetes else 0
+    fallidas_porcentaje = round((fallidas_unidades / paquetes) * 100, 2) if paquetes else 0
+
+    # 🖨️ Mostrar los resultados en consola (con el sitio en negritas)
+    print(f"\n📦 Datos del sitio: \033[1m{site}\033[0m")
+    print(f"🚀 Rutas: {rutas}")
+    print(f"📦 Paquetes: {paquetes}")
+    print(f"🎒 Sacas: {sacas}")
+    print(f"✅ Entregados (unidades): {entregados_unidades}")
+    print(f"✅ Entregados (%): {entregados_porcentaje} %")
+    print(f"🚫 Fallidas (unidades): {fallidas_unidades}")
+    print(f"🚫 Fallidas (%): {fallidas_porcentaje} %")
+
+    # 💾 Acumular métricas en el diccionario global
+    acumulador["rutas"] += rutas
+    acumulador["paquetes"] += paquetes
+    acumulador["sacas"] += sacas
+    acumulador["entregados_u"] += entregados_unidades
+    acumulador["fallidas_u"] += fallidas_unidades
+    acumulador["entregados_%"].append(entregados_porcentaje)
+    acumulador["fallidas_%"].append(fallidas_porcentaje)
+
+# 📋 Muestra resumen general acumulado de todos los sitios
+def mostrar_resumen_general():
+    total_sites = len(acumulador["entregados_%"])
+    entregados_avg = round(sum(acumulador["entregados_%"]) / total_sites, 2) if total_sites else 0
+    fallidas_avg = round(sum(acumulador["fallidas_%"]) / total_sites, 2) if total_sites else 0
+
+    print("\n📊 🔚 RESUMEN GENERAL")
+    print(f"🚀 Total rutas: {acumulador['rutas']}")
+    print(f"📦 Total paquetes: {acumulador['paquetes']}")
+    print(f"🎒 Total sacas: {acumulador['sacas']}")
+    print(f"✅ Total entregados (unidades): {acumulador['entregados_u']}")
+    print(f"✅ Promedio entregados (%): {entregados_avg} %")
+    print(f"🚫 Total fallidas (unidades): {acumulador['fallidas_u']}")
+    print(f"🚫 Promedio fallidas (%): {fallidas_avg} %")
+
+# 🚀 Punto de entrada principal
+def main():
+    # 🔧 Configuración inicial del navegador
+    driver, wait = configurar_navegador()
+    try:
+        # 🔐 Acceso al sistema
+        acceder_al_sistema(driver, "https://envios.adminml.com/logistics/monitoring-distribution")
+        ingresar_usuario(wait, "ext_hugodomi")
+        ingresar_contrasena(wait, "Empezaron&4193%")
+
+        # 🔄 Loop para revisar varios sitios
+        while True:
+            clic_boton_estas_viendo(wait)
+            esperar_campos_busqueda(wait)
+            esperar_confirmacion_manual()
+            extraer_datos(driver, wait)
+
+            seguir = input("\n¿Deseas consultar otro site? (Enter = Sí / n = No): ").strip().lower()
+            if seguir == 'n':
+                break
+
+        # 📋 Mostrar resumen acumulado
+        mostrar_resumen_general()
+
+    except Exception:
+        # ⚠️ En caso de error, imprimir traza y capturar pantalla
+        print("❌ Se produjo un error:")
+        traceback.print_exc()
+        driver.save_screenshot("error_debug.png")
+    finally:
+        # 🧭 Mantener el navegador abierto al finalizar
+        print("✅ El navegador se mantendrá abierto para revisión manual.")
+
+# 🔁 Ejecutar el script
+if __name__ == "__main__":
+    main()
