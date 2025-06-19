@@ -1,3 +1,4 @@
+# 📦 Importaciones necesarias
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -12,6 +13,8 @@ import time
 import traceback
 from datetime import datetime
 
+# 🚀 Configura el navegador Chrome
+# Devuelve el driver y un objeto "wait" para hacer esperas explícitas
 
 def configurar_navegador():
     options = Options()
@@ -19,15 +22,19 @@ def configurar_navegador():
         service=Service(ChromeDriverManager().install()),
         options=options
     )
-    driver.set_window_rect(0, 0, 640, 640)
+    driver.set_window_rect(0, 0, 640, 640)  # Tamaño pequeño para no consumir pantalla
     wait = WebDriverWait(driver, 60)
     return driver, wait
 
+
+# 🌐 Abre la página de logística
 
 def acceder_al_sistema(driver, url):
     driver.get(url)
     print("🌐 Página cargada:", url)
 
+
+# 🔑 Ingresa el usuario en el campo correspondiente
 
 def ingresar_usuario(wait, usuario):
     inp = wait.until(EC.presence_of_element_located((By.NAME, "identifier")))
@@ -38,6 +45,8 @@ def ingresar_usuario(wait, usuario):
     print("✅ Usuario ingresado")
 
 
+# 🔐 Ingresa la contraseña
+
 def ingresar_contrasena(wait, contrasena):
     inp = wait.until(EC.presence_of_element_located((By.NAME, "credentials.passcode")))
     inp.send_keys(contrasena)
@@ -46,6 +55,8 @@ def ingresar_contrasena(wait, contrasena):
     btn.click()
     print("✅ Contraseña ingresada")
 
+
+# 👉 Da clic en el botón "Estás viendo"
 
 def clic_boton_estas_viendo(wait):
     try:
@@ -57,9 +68,13 @@ def clic_boton_estas_viendo(wait):
         raise Exception(f"❌ Error al hacer clic en 'Estás viendo': {e}")
 
 
+# ⏰ Espera que el usuario seleccione manualmente el sitio y aplique el filtro
+
 def esperar_confirmacion_manual():
     input("🗁️ Selecciona sitio, haz clic en 'Aplicar' y luego presiona ENTER aquí...")
 
+
+# 📍 Obtiene el nombre del sitio seleccionado actualmente
 
 def obtener_sitio(driver):
     try:
@@ -71,6 +86,8 @@ def obtener_sitio(driver):
         return ""
 
 
+# 🔍 Cuenta cuántas rutas activas hay en pantalla (que estén desplegadas)
+
 def contar_rutas_activas(driver):
     filas = driver.find_elements(By.CSS_SELECTOR, "div.monitoring-row__first-line")
     rutas = [f for f in filas if f.find_elements(
@@ -79,9 +96,13 @@ def contar_rutas_activas(driver):
     return rutas
 
 
+# 🔎 Limpia el texto para quitar palabras irrelevantes (no se usa actualmente)
+
 def limpiar_paquetes(texto):
     return re.sub(r'(entregados|entregas|fallidas)', '', texto).strip()
 
+
+# 📊 Extrae toda la información de una ruta (datos visibles)
 
 def extraer_datos_ruta(ruta_element):
     html = ruta_element.get_attribute('innerHTML')
@@ -109,17 +130,15 @@ def extraer_datos_ruta(ruta_element):
         else:
             data['Nombre Ruta'] = txt
 
-    # Ciclo
+    # Ciclo, Conductor, Placa y Vehículo
     ciclo = soup.find('div', class_='monitoring-row-details__cycle')
     if ciclo:
         data['Ciclo'] = ciclo.get_text(strip=True)
 
-    # Conductor
     cond = soup.find('p', class_='monitoring-row-details__driver-name')
     if cond:
         data['Conductor Nombre'] = cond.get_text(strip=True)
 
-    # Placa & tipo vehículo
     lic = soup.find('p', class_='monitoring-row-details__license')
     if lic:
         parts = lic.get_text(strip=True).split('|')
@@ -134,13 +153,14 @@ def extraer_datos_ruta(ruta_element):
         data['Paquetes Entregados'] = int(re.sub(r'\D', '', e))
         data['Paquetes Fallidos'] = int(re.sub(r'\D', '', f))
 
-    # Pendientes
+    # Paquetes pendientes (evita ValueError si está vacío)
     pen = soup.find('p', class_='monitoring-row-shipments__packages')
     if pen:
         ptxt = pen.get_text(strip=True)
-        data['Paquetes Pendientes'] = int(re.sub(r'\D', '', ptxt))
+        n = re.sub(r'\D', '', ptxt)
+        data['Paquetes Pendientes'] = int(n) if n else 0
 
-    # Total y efectividad
+    # Totales y efectividad
     total = (data['Paquetes Entregados'] +
              data['Paquetes Fallidos'] +
              data['Paquetes Pendientes'])
@@ -149,7 +169,7 @@ def extraer_datos_ruta(ruta_element):
         efect = (total - data['Paquetes Fallidos']) / total * 100
         data['Efectividad (%)'] = round(efect, 2)
 
-    # Estado general y detalle
+    # Estado
     est = soup.find('p', class_='monitoring-row-details__name')
     descs = soup.find_all('p', class_='monitoring-row-details__untracked')
     if est:
@@ -157,7 +177,7 @@ def extraer_datos_ruta(ruta_element):
     if descs:
         data['Estado Detalle'] = descs[-1].get_text(strip=True)
 
-    # Horas OZH / ORH
+    # Horas
     for box in soup.find_all('div', class_='metric-box'):
         tit = box.find('div', class_='andes-tooltip__trigger')
         val = box.find('div', class_='metric-box__value-principal')
@@ -169,47 +189,47 @@ def extraer_datos_ruta(ruta_element):
             elif 'ORH' in t:
                 data['Horas Ruta (ORH)'] = v
 
-    # Inf Auxiliar
+    # Auxiliar
     aux = soup.find('div', class_='monitoring-row-details__data-has-helper')
     data['Inf Auxiliar'] = 'Con auxiliar' if aux else 'Sin auxiliar'
 
     return data
 
 
+# 📃 Guarda los datos en un archivo Excel con formato y semáforo de efectividad
+
 def guardar_en_excel(datos):
     df = pd.DataFrame(datos)
-    # Orden exacto de las columnas
     cols = [
-        "Fecha","Sitio","Conductor Nombre","Nombre Ruta","ID Ruta","Ciclo",
-        "Placa","Tipo Vehículo","Inf Auxiliar",
-        "Paquetes Entregados","Paquetes Fallidos","Paquetes Pendientes",
-        "Total Paquetes","Efectividad (%)","Estado Detalle",
-        "Horas Zona (OZH)","Horas Ruta (ORH)","Estado General"
+        "Fecha", "Sitio", "Conductor Nombre", "Nombre Ruta", "ID Ruta", "Ciclo",
+        "Placa", "Tipo Vehículo", "Inf Auxiliar",
+        "Paquetes Entregados", "Paquetes Fallidos", "Paquetes Pendientes",
+        "Total Paquetes", "Efectividad (%)", "Estado Detalle",
+        "Horas Zona (OZH)", "Horas Ruta (ORH)", "Estado General"
     ]
     df = df[cols]
 
     nombre = f"rutas_data_{datetime.now().strftime('%Y%m%d')}.xlsx"
     with pd.ExcelWriter(nombre, engine='xlsxwriter') as writer:
         df.to_excel(writer, sheet_name='Rutas', index=False)
-        wb  = writer.book
-        ws  = writer.sheets['Rutas']
+        wb = writer.book
+        ws = writer.sheets['Rutas']
 
-        # Formatos
-        center_fmt  = wb.add_format({'align': 'center'})
+        # Formatos de celdas
+        center_fmt = wb.add_format({'align': 'center'})
         default_fmt = wb.add_format({'align': 'left'})
         to_center = {
-            "Paquetes Entregados","Paquetes Fallidos","Paquetes Pendientes",
-            "Total Paquetes","Efectividad (%)",
-            "Horas Zona (OZH)","Horas Ruta (ORH)"
+            "Paquetes Entregados", "Paquetes Fallidos", "Paquetes Pendientes",
+            "Total Paquetes", "Efectividad (%)",
+            "Horas Zona (OZH)", "Horas Ruta (ORH)"
         }
 
-        # Ajustar ancho y alineación
         for idx, col in enumerate(df.columns):
             max_len = max(df[col].astype(str).map(len).max(), len(col)) + 2
             fmt = center_fmt if col in to_center else default_fmt
             ws.set_column(idx, idx, max_len, fmt)
 
-        # Semáforo en Efectividad (%)
+        # Semáforo de efectividad
         col_idx = df.columns.get_loc("Efectividad (%)")
         last_row = len(df)
         ws.conditional_format(
@@ -224,8 +244,10 @@ def guardar_en_excel(datos):
                 'show_value': True
             }
         )
-    print(f"💾 Archivo generado: {nombre}")
+    print(f"📅 Archivo generado: {nombre}")
 
+
+# 🚀 Punto de entrada del script
 
 def main():
     driver, wait = configurar_navegador()
@@ -246,8 +268,8 @@ def main():
 
             for ruta in rutas:
                 d = extraer_datos_ruta(ruta)
-                d['Sitio']  = sitio
-                d['Fecha']  = fecha
+                d['Sitio'] = sitio
+                d['Fecha'] = fecha
                 resultados.append(d)
 
             if input("\n¿Otro sitio? (Enter=Sí / n=No): ").lower() == 'n':
@@ -259,9 +281,11 @@ def main():
         print("❌ Error:")
         traceback.print_exc()
     finally:
-        print("🧭 Revisa el navegador y cierra cuando quieras.")
+        print("🧱 Revisa el navegador y cierra cuando quieras.")
         # driver.quit()
 
 
+# ⚖️ Ejecutar script principal
 if __name__ == "__main__":
     main()
+
