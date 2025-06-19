@@ -1,0 +1,236 @@
+# 📦 Librerías necesarias para automatización y análisis
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium import webdriver
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
+from bs4 import BeautifulSoup
+import re
+import pandas as pd
+import time
+import traceback
+from datetime import datetime
+from selenium.webdriver.common.action_chains import ActionChains
+
+# 🧭 Configura el navegador Chrome para la automatización
+def configurar_navegador():
+    options = Options()
+    driver = webdriver.Chrome(
+        service=Service(ChromeDriverManager().install()),
+        options=options
+    )
+    driver.set_window_rect(0, 0, 640, 640)  # Tamaño fijo de la ventana
+    wait = WebDriverWait(driver, 60)       # Espera explícita de 60 segundos
+    return driver, wait
+
+# 🌐 Accede a la URL del sistema
+def acceder_al_sistema(driver, url):
+    driver.get(url)
+
+# 🔐 Ingresa el nombre de usuario en el formulario de login
+def ingresar_usuario(wait, usuario):
+    inp = wait.until(EC.presence_of_element_located((By.NAME, "identifier")))
+    inp.send_keys(usuario)
+    wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='submit'],button[type='submit']"))).click()
+
+# 🔐 Ingresa la contraseña en el formulario de login
+def ingresar_contrasena(wait, contrasena):
+    inp = wait.until(EC.presence_of_element_located((By.NAME, "credentials.passcode")))
+    inp.send_keys(contrasena)
+    wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='submit'],button[type='submit']"))).click()
+
+# ✅ Clic en botón "Estás viendo" para activar la vista
+def clic_boton_estas_viendo(wait):
+    wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(text(),'Estás viendo')]"))).click()
+
+# ✋ Espera manual para que el usuario seleccione el sitio y aplique filtros
+def esperar_confirmacion_manual():
+    input("🗁️ Selecciona sitio y haz clic en 'Aplicar'. Luego ENTER…")
+
+# 📍 Obtiene el nombre del sitio actualmente seleccionado
+def obtener_sitio(driver):
+    try:
+        return driver.find_element(By.CSS_SELECTOR, "span.appNav_selector__selection").text.strip()
+    except:
+        return ""
+
+# 🔍 Cuenta las rutas visibles y activas en la pantalla
+def contar_rutas_activas(driver):
+    rows = driver.find_elements(By.CSS_SELECTOR, "div.monitoring-row__first-line")
+    return [r for r in rows if r.find_elements(By.CSS_SELECTOR, "img.monitoring-row__chevron, img.monitoring-row__chevron--open")]
+
+# 🛑 Extrae información detallada de cada parada en una ruta
+# Esta función recorre todas las paradas visibles en la ruta, las expande si están cerradas,
+# y extrae los datos de domicilio, cantidad de paquetes, tipo, y si es posible, entra a la vista detallada
+# para obtener el ID del paquete, su estado y la etiqueta asociada.
+def extraer_paradas(driver):
+    WebDriverWait(driver, 5).until(
+        EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".stops-list-content"))
+    )
+    registros = []
+
+    for blk in driver.find_elements(By.CSS_SELECTOR, ".stops-list-content"):
+        try:
+            blk.find_element(By.CSS_SELECTOR, ".chevron img").click()
+            time.sleep(0.2)
+        except:
+            pass
+
+        frag = BeautifulSoup(blk.get_attribute('innerHTML'), 'html.parser')
+
+        # Extrae número de parada
+        idx_tag = frag.find('span', class_=re.compile("stops-list-index"))
+        numero = idx_tag.get_text(strip=True) if idx_tag else None
+        if not numero:
+            continue
+
+        # Extrae dirección
+        num_tag = frag.find('div', class_='stops-list-id-wrapper__number')
+        direccion = num_tag.get_text(strip=True) if num_tag else ""
+
+        # Extrae cantidad de domicilios y paquetes
+        strongs = frag.find_all('strong')
+        domicilios = int(strongs[0].get_text()) if len(strongs) > 0 else 0
+        paquetes = int(strongs[1].get_text()) if len(strongs) > 1 else 0
+
+        # Extrae tipo de parada
+        tipo = ""
+        data_blks = frag.find_all("div", class_="stops-list-id-wrapper__data")
+        if len(data_blks) > 1:
+            label = data_blks[1].get_text(strip=True)
+            parts = label.split()
+            tipo = parts[-1].capitalize()
+
+        # Intenta abrir el detalle del paquete
+        id_paquete = ""
+        estado = ""
+        etiqueta = ""
+
+        try:
+            btns = blk.find_elements(By.XPATH, ".//button[contains(., 'Ver detalle')] | .//a[contains(., 'Ver detalle')]")
+            if not btns:
+                btns = blk.find_elements(By.CSS_SELECTOR, "button, a")
+
+            for b in btns:
+                if b.is_displayed():
+                    ActionChains(driver).move_to_element(b).pause(0.3).click(b).perform()
+                    break
+            else:
+                raise Exception("No se encontró botón para ver detalle")
+
+            WebDriverWait(driver, 5).until(EC.number_of_windows_to_be(2))
+            ventanas = driver.window_handles
+            driver.switch_to.window(ventanas[-1])
+            time.sleep(1)
+
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
+
+            # Extrae datos del paquete
+            id_tag = soup.select_one(".transport-unit__data-id-text p")
+            estado_tag = soup.select_one(".transport-unit__data-state span")
+            tooltip_tag = soup.select_one(".tooltip-content")
+
+            id_paquete = id_tag.text.strip() if id_tag else ""
+            estado = estado_tag.text.strip() if estado_tag else ""
+            etiqueta = tooltip_tag.text.strip().replace("Etiqueta: ", "") if tooltip_tag else ""
+
+            driver.close()
+            driver.switch_to.window(ventanas[0])
+
+        except Exception as e:
+            print(f"❌ No se pudo abrir detalle de una parada: {e}")
+
+        # Agrega los datos a la lista
+        registros.append({
+            'Número Parada': numero,
+            'Dirección': direccion,
+            'Domicilios': domicilios,
+            'Paquetes': paquetes,
+            'Tipo de parada': tipo,
+            'ID Paquete': id_paquete,
+            'Estado Paquete': estado,
+            'Etiqueta': etiqueta
+        })
+
+    return registros
+
+# 🚚 Extrae datos generales y paradas para una ruta específica
+def extraer_datos_ruta(driver, ruta_element, sitio, fecha):
+    ruta_element.click()
+    time.sleep(1)
+    main_win, popup = driver.window_handles
+    driver.switch_to.window(popup)
+
+    soup = BeautifulSoup(driver.page_source, 'html.parser')
+    h2 = soup.find('h2', attrs={'aria-describedby': True})
+    ruta_abierta = h2.get_text(strip=True) if h2 else ""
+
+    drv = soup.find('p', class_='route-information-item__info')
+    driver_abierto = drv.get_text(strip=True) if drv else ""
+
+    paradas = extraer_paradas(driver)
+    input(f"👀 Revisa ruta '{ruta_abierta}' y ENTER…")
+
+    driver.close()
+    driver.switch_to.window(main_win)
+
+    # Construye registros para guardar
+    filas = []
+    for p in paradas:
+        row = {
+            'Fecha': fecha,
+            'Sitio': sitio,
+            'Ruta Abierta': ruta_abierta,
+            'Driver Abierto': driver_abierto,
+            **p
+        }
+        filas.append(row)
+    return filas
+
+# 💾 Guarda todos los datos recolectados en un CSV
+def guardar_en_csv(registros):
+    df = pd.DataFrame(registros)
+    cols = [
+        "Fecha", "Sitio", "Ruta Abierta", "Driver Abierto",
+        "Número Parada", "Dirección", "Domicilios", "Paquetes", "Tipo de parada",
+        "ID Paquete", "Estado Paquete", "Etiqueta"
+    ]
+    for c in cols:
+        if c not in df.columns:
+            df[c] = ""
+    df = df[cols]
+    fn = f"rutas_data_{datetime.now().strftime('%Y%m%d')}.csv"
+    df.to_csv(fn, index=False, encoding='utf-8-sig')
+    print(f"💾 Guardado en '{fn}'")
+
+# 🚀 Función principal de ejecución
+def main():
+    driver, wait = configurar_navegador()
+    try:
+        acceder_al_sistema(driver, "https://envios.adminml.com/logistics/monitoring-distribution")
+        ingresar_usuario(wait, "ext_hugodomi")
+        ingresar_contrasena(wait, "Empezaron&4193%")
+        clic_boton_estas_viendo(wait)
+        esperar_confirmacion_manual()
+
+        sitio = obtener_sitio(driver)
+        fecha = datetime.now().strftime('%Y-%m-%d')
+        rutas = contar_rutas_activas(driver)
+
+        all_regs = []
+        for ruta in rutas:
+            regs = extraer_datos_ruta(driver, ruta, sitio, fecha)
+            all_regs.extend(regs)
+
+        guardar_en_csv(all_regs)
+
+    except Exception:
+        traceback.print_exc()
+    finally:
+        driver.quit()
+
+# 🏁 Punto de entrada del script
+if __name__ == "__main__":
+    main()
