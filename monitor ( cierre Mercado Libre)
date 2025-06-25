@@ -72,12 +72,12 @@ def extraer_datos(driver, wait):
     # 📍 Extraer nombre del sitio
     site = driver.find_element(By.CLASS_NAME, "appNav_selector__selection").text
 
-    # 📈 Extraer métricas numéricas principales
+    # 📈 Extraer métricas numéricas principales desde tarjetas
     rutas = int(driver.find_element(By.XPATH, "//p[text()='Rutas']/following-sibling::div").text.replace(",", ""))
     paquetes = int(driver.find_element(By.XPATH, "//p[text()='Paquetes']/following-sibling::div").text.replace(",", ""))
     sacas = int(driver.find_element(By.XPATH, "//p[text()='Sacas']/following-sibling::div").text.replace(",", ""))
 
-    # ✅ Extraer entregados desde el tooltip con JavaScript
+    # ✅ Extraer entregados desde tooltip usando JavaScript
     entregados_unidades = int(driver.execute_script("""
         let tip = [...document.querySelectorAll('.chart-tooltip-title')].find(e => e.textContent.includes('Entregados'));
         if (tip) {
@@ -87,7 +87,7 @@ def extraer_datos(driver, wait):
         return "0";
     """) or "0")
 
-    # 🚫 Extraer fallidas desde el tooltip con JavaScript
+    # 🚫 Extraer fallidas desde tooltip usando JavaScript
     fallidas_unidades = int(driver.execute_script("""
         let tip = [...document.querySelectorAll('.chart-tooltip-title')].find(e => e.textContent.toLowerCase().includes('fallidas'));
         if (tip) {
@@ -97,11 +97,12 @@ def extraer_datos(driver, wait):
         return "0";
     """) or "0")
 
-    # 📊 Calcular porcentajes de entregados y fallidas correctamente
-    entregados_porcentaje = round((entregados_unidades / paquetes) * 100, 2) if paquetes else 0
-    fallidas_porcentaje = round((fallidas_unidades / paquetes) * 100, 2) if paquetes else 0
+    # 📊 Calcular porcentajes considerando paquetes + sacas como total de unidades
+    total_unidades = paquetes + sacas
+    entregados_porcentaje = round((entregados_unidades / total_unidades) * 100, 2) if total_unidades else 0
+    fallidas_porcentaje = round((fallidas_unidades / total_unidades) * 100, 2) if total_unidades else 0
 
-    # 🖨️ Mostrar los resultados en consola (con el sitio en negritas)
+    # 🖨️ Mostrar los resultados en consola (sitio en negritas)
     print(f"\n📦 Datos del sitio: \033[1m{site}\033[0m")
     print(f"🚀 Rutas: {rutas}")
     print(f"📦 Paquetes: {paquetes}")
@@ -137,7 +138,6 @@ def mostrar_resumen_general():
 
 # 🚀 Punto de entrada principal
 def main():
-    # 🔧 Configuración inicial del navegador
     driver, wait = configurar_navegador()
     try:
         # 🔐 Acceso al sistema
@@ -160,14 +160,12 @@ def main():
         mostrar_resumen_general()
 
     except Exception:
-        # ⚠️ En caso de error, imprimir traza y capturar pantalla
         print("❌ Se produjo un error:")
         traceback.print_exc()
         driver.save_screenshot("error_debug.png")
     finally:
-        # 🧭 Mantener el navegador abierto al finalizar
         print("✅ El navegador se mantendrá abierto para revisión manual.")
 
-# 🔁 Ejecutar el script
+# 🔁 Ejecutar el script si se corre directamente
 if __name__ == "__main__":
     main()
