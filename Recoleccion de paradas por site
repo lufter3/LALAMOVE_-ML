@@ -13,7 +13,6 @@ import traceback
 from datetime import datetime
 from selenium.webdriver.common.action_chains import ActionChains
 
-
 def configurar_navegador():
     options = Options()
     driver = webdriver.Chrome(
@@ -24,10 +23,8 @@ def configurar_navegador():
     wait = WebDriverWait(driver, 60)
     return driver, wait
 
-
 def acceder_al_sistema(driver, url):
     driver.get(url)
-
 
 def ingresar_usuario(wait, usuario):
     inp = wait.until(EC.presence_of_element_located((By.NAME, "identifier")))
@@ -35,22 +32,18 @@ def ingresar_usuario(wait, usuario):
     wait.until(EC.element_to_be_clickable(
         (By.CSS_SELECTOR, "input[type='submit'],button[type='submit']"))).click()
 
-
 def ingresar_contrasena(wait, contrasena):
     inp = wait.until(EC.presence_of_element_located((By.NAME, "credentials.passcode")))
     inp.send_keys(contrasena)
     wait.until(EC.element_to_be_clickable(
         (By.CSS_SELECTOR, "input[type='submit'],button[type='submit']"))).click()
 
-
 def clic_boton_estas_viendo(wait):
     wait.until(EC.element_to_be_clickable(
         (By.XPATH, "//span[contains(text(),'Estás viendo')]"))).click()
 
-
 def esperar_confirmacion_manual():
     input("🗁️ Selecciona sitio y haz clic en 'Aplicar'. Luego ENTER…")
-
 
 def obtener_sitio(driver):
     try:
@@ -58,19 +51,21 @@ def obtener_sitio(driver):
     except:
         return ""
 
-
 def contar_rutas_activas(driver):
     rows = driver.find_elements(By.CSS_SELECTOR, "div.monitoring-row__first-line")
     return [r for r in rows if r.find_elements(
         By.CSS_SELECTOR, "img.monitoring-row__chevron, img.monitoring-row__chevron--open")]
 
-
 def extraer_paradas(driver):
-    WebDriverWait(driver, 5).until(
-        EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".stops-list-content"))
-    )
-    registros = []
+    try:
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".stops-list-content"))
+        )
+    except Exception:
+        print("⚠️ No se encontraron paradas en esta ruta.")
+        return []
 
+    registros = []
 
     for blk in driver.find_elements(By.CSS_SELECTOR, ".stops-list-content"):
         try:
@@ -79,24 +74,19 @@ def extraer_paradas(driver):
         except:
             pass
 
-
         frag = BeautifulSoup(blk.get_attribute('innerHTML'), 'html.parser')
-
 
         idx_tag = frag.find('span', class_=re.compile("stops-list-index"))
         numero = idx_tag.get_text(strip=True) if idx_tag else None
         if not numero:
             continue
 
-
         num_tag = frag.find('div', class_='stops-list-id-wrapper__number')
         direccion = num_tag.get_text(strip=True) if num_tag else ""
-
 
         strongs = frag.find_all('strong')
         domicilios = int(strongs[0].get_text()) if len(strongs) > 0 else 0
         paquetes = int(strongs[1].get_text()) if len(strongs) > 1 else 0
-
 
         tipo = ""
         data_blks = frag.find_all("div", class_="stops-list-id-wrapper__data")
@@ -105,17 +95,14 @@ def extraer_paradas(driver):
             parts = label.split()
             tipo = parts[-1].capitalize()
 
-
         id_paquete = ""
         estado = ""
         etiqueta = ""
-
 
         try:
             btns = blk.find_elements(By.XPATH, ".//button[contains(., 'Ver detalle')] | .//a[contains(., 'Ver detalle')]")
             if not btns:
                 btns = blk.find_elements(By.CSS_SELECTOR, "button, a")
-
 
             for b in btns:
                 if b.is_displayed():
@@ -124,33 +111,26 @@ def extraer_paradas(driver):
             else:
                 raise Exception("No se encontró botón para ver detalle")
 
-
             WebDriverWait(driver, 5).until(EC.number_of_windows_to_be(2))
             ventanas = driver.window_handles
             driver.switch_to.window(ventanas[-1])
             time.sleep(1)
 
-
             soup = BeautifulSoup(driver.page_source, 'html.parser')
-
 
             id_tag = soup.select_one(".transport-unit__data-id-text p")
             estado_tag = soup.select_one(".transport-unit__data-state span")
             tooltip_tag = soup.select_one(".tooltip-content")
 
-
             id_paquete = id_tag.text.strip() if id_tag else ""
             estado = estado_tag.text.strip() if estado_tag else ""
             etiqueta = tooltip_tag.text.strip().replace("Etiqueta: ", "") if tooltip_tag else ""
 
-
             driver.close()
             driver.switch_to.window(ventanas[0])
 
-
         except Exception as e:
             print(f"❌ No se pudo abrir detalle de una parada: {e}")
-
 
         registros.append({
             'Número Parada': numero,
@@ -163,9 +143,7 @@ def extraer_paradas(driver):
             'Etiqueta': etiqueta
         })
 
-
     return registros
-
 
 def extraer_datos_ruta(driver, ruta_element, sitio, fecha):
     ruta_element.click()
@@ -173,23 +151,19 @@ def extraer_datos_ruta(driver, ruta_element, sitio, fecha):
     main_win, popup = driver.window_handles
     driver.switch_to.window(popup)
 
-
     soup = BeautifulSoup(driver.page_source, 'html.parser')
     h2 = soup.find('h2', attrs={'aria-describedby': True})
     ruta_abierta = h2.get_text(strip=True) if h2 else ""
 
-
     drv = soup.find('p', class_='route-information-item__info')
     driver_abierto = drv.get_text(strip=True) if drv else ""
 
-
+    print(f"🔍 Procesando ruta: {ruta_abierta}")
     paradas = extraer_paradas(driver)
     input(f"👀 Revisa ruta '{ruta_abierta}' y ENTER…")
 
-
     driver.close()
     driver.switch_to.window(main_win)
-
 
     filas = []
     for p in paradas:
@@ -202,7 +176,6 @@ def extraer_datos_ruta(driver, ruta_element, sitio, fecha):
         }
         filas.append(row)
     return filas
-
 
 def guardar_en_csv(registros):
     df = pd.DataFrame(registros)
@@ -219,7 +192,6 @@ def guardar_en_csv(registros):
     df.to_csv(fn, index=False, encoding='utf-8-sig')
     print(f"💾 Guardado en '{fn}'")
 
-
 def main():
     driver, wait = configurar_navegador()
     try:
@@ -229,27 +201,25 @@ def main():
         clic_boton_estas_viendo(wait)
         esperar_confirmacion_manual()
 
-
         sitio = obtener_sitio(driver)
         fecha = datetime.now().strftime('%Y-%m-%d')
         rutas = contar_rutas_activas(driver)
 
-
         all_regs = []
         for ruta in rutas:
-            regs = extraer_datos_ruta(driver, ruta, sitio, fecha)
-            all_regs.extend(regs)
-
+            try:
+                regs = extraer_datos_ruta(driver, ruta, sitio, fecha)
+                all_regs.extend(regs)
+            except Exception as e:
+                print(f"❌ Error al procesar ruta: {e}")
+                continue
 
         guardar_en_csv(all_regs)
-
 
     except Exception:
         traceback.print_exc()
     finally:
         driver.quit()
 
-
 if __name__ == "__main__":
     main()
-
